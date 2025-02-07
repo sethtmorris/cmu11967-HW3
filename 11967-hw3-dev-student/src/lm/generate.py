@@ -26,9 +26,13 @@ def softmax_with_temperature(
     """
 
     # to avoid division by 0
-    temperature = max(temperature, 1e-5)
-    
-    return ...
+    temperature = max(temperature, .1) #1e-5)
+    num = torch.exp(logits / temperature)
+    print(num)
+    den = torch.transpose(torch.sum(num, axis=-1).repeat(logits.size(-1), 1), 0, 1)
+    print(den)
+
+    return torch.div(num, den)
 
 
 @torch.inference_mode()
