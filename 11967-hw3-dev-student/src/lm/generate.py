@@ -85,13 +85,23 @@ def generate(
         #print(equal_len_tokens) #seq_n += 1
     #print(batch_size)
     #print(equal_len_tokens)
+    batched_tokens = []
+    batched_masks = []
     if batch_size is None or len(equal_len_tokens) < batch_size:
         tokens = torch.tensor(equal_len_tokens, dtype=torch.long, device=device)
+        batched_tokens.append(tokens)
         mask = torch.tensor(attention_mask, dtype=torch.float, device=device)
+        batched_masks.append(mask)
     else:
-        tokens = torch.tensor(equal_len_tokens[:batch_size], dtype=torch.long, device=device)
-        mask = torch.tensor(attention_mask[:batch_size], dtype=torch.float, device=device)
-    logits = model(tokens, attention_mask=mask)
+        while equal_len_tokens / batch_size > 0:
+            tokens = torch.tensor(equal_len_tokens[:batch_size], dtype=torch.long, device=device)
+            batched_tokens.append(tokens)
+            equal_len_tokens = equal_len_tokens[batch_size:]
+            mask = torch.tensor(attention_mask[:batch_size], dtype=torch.float, device=device)
+            batched_masks.append(mask)
+            attention_mask = attention_mask[batch_size:]
+
+    logits = model(next(iter(batched_tokens)), attention_mask=next(iter(batched_masks)))
     probabilities = softmax_with_temperature(logits, temperature)
     generations = tokenizer.decode(probabilities)
     perplexity = 0
