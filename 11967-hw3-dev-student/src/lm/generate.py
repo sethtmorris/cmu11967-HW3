@@ -64,11 +64,37 @@ def generate(
         sequences have equal length. `attention_mask` should be set to 0.0 for
         padding tokens, and 1.0 everywhere else.
     """
-    tokens = tokenizer.eot_token(prefixes).to(device)
-    logits = model(tokens, attention_mask=None).to(device)
-    probabilities = softmax_with_temperature(logits, temperature).to(device)
-    generations = 
-    perplexity = ...
+    tokens_list = tokenizer.encode_batch(prefixes, allowed_special={"<|endoftext|>"})
+    print(tokens_list)
+
+    seq_len = 128
+    #seq_n = 0
+    equal_len_tokens = []
+    attention_mask = []
+    for sequence in tokens_list:
+        #print(sequence)
+        while len(sequence) > seq_len:
+           equal_len_tokens.append(sequence[:seq_len])
+           sequence = sequence[seq_len:]
+           #print(equal_len_tokens) #seq_n += 1
+        #print(len(sequence))
+        left_padded_tokens = [tokenizer.eot_token] * (seq_len - len(sequence)) + sequence
+        #print(left_padded_tokens)
+        equal_len_tokens.append(left_padded_tokens)
+        attention_mask.append(([0.0] * (seq_len - len(sequence))) + ([1.0] * len(sequence)))
+        #print(equal_len_tokens) #seq_n += 1
+    #print(batch_size)
+    #print(equal_len_tokens)
+    if batch_size is None or len(equal_len_tokens) < batch_size:
+        tokens = torch.tensor(equal_len_tokens, dtype=torch.long, device=device)
+        mask = torch.tensor(attention_mask, dtype=torch.float, device=device)
+    else:
+        tokens = torch.tensor(equal_len_tokens[:batch_size], dtype=torch.long, device=device)
+        mask = torch.tensor(attention_mask[:batch_size], dtype=torch.float, device=device)
+    logits = model(tokens, attention_mask=mask)
+    probabilities = softmax_with_temperature(logits, temperature)
+    generations = tokenizer.decode(probabilities)
+    perplexity = 0
 
     print(f"Perplexity: {perplexity}")
     return generations
