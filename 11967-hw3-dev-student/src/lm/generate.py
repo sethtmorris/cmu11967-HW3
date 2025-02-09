@@ -64,8 +64,10 @@ def generate(
         sequences have equal length. `attention_mask` should be set to 0.0 for
         padding tokens, and 1.0 everywhere else.
     """
-
-    generations = ...
+    tokens = tokenizer.eot_token(prefixes).to(device)
+    logits = model(tokens, attention_mask=None).to(device)
+    probabilities = softmax_with_temperature(logits, temperature).to(device)
+    generations = 
     perplexity = ...
 
     print(f"Perplexity: {perplexity}")

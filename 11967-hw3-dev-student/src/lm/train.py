@@ -46,7 +46,11 @@ def random_batch_sampler(
     """
 
     while True:
-        yield ...
+        if tokens.size(dim=0) >= batch_size*seq_len:
+            random_index = torch.randint(0, tokens.size(dim=0) - batch_size*seq_len, (1,)).item()
+            yield torch.reshape(tokens[random_index:random_index+batch_size*seq_len], (batch_size, seq_len)).to(device) #torch.reshape(tokens, (-1, batch_size, seq_len)) #torch.reshape(next(iter(DataLoader(tokens, batch_size=seq_len*batch_size, shuffle=True))), (batch_size, seq_len)) #torch.tensor(list(tokens[start_index:(start_index + seq_len)] for start_index in list(torch.randint(0, len(tokens) - seq_len, (batch_size,), device=device)))) # torch.LongTensor(batch_size * tokens.randperm(seq_len)[:batch_size]).to(device) # torch.LongTensor(batch_size * sample_tensor(tokens, seq_len)) # 
+        else:
+            yield tokens.to(device)
 
 
 def sequential_batch_sampler(
@@ -71,8 +75,15 @@ def sequential_batch_sampler(
         the last batch.
     """
 
-    for batch in ...:
-        yield ...
+#    for batch in torch.reshape(torch.tensor(torch.split(tokens, batch_size*seq_len)), (batch_size, seq_len)): #range(0, tokens.size(dim=0) - seq_len, seq_len):
+#        yield batch.to(device)
+    #for batch in DataLoader(tokens, batch_size=seq_len*batch_size, shuffle=True):
+    #    yield torch.reshape(batch, (batch_size, seq_len))
+    batches = tokens.size(0) // (batch_size*seq_len)
+    #for batch in torch.reshape(tokens[0:batches*batch_size*seq_len], (batches, batch_size, seq_len)):
+    for i in range(batches):
+        batch = tokens[i * batch_size * seq_len : (i + 1) * batch_size * seq_len].view(batch_size, seq_len)
+        yield batch.to(device)
 
 
 def cosine_lr_schedule(
@@ -90,18 +101,19 @@ def cosine_lr_schedule(
         Returns:
             lr: learning rate at step t
 
-        Hint: Question 1.2 in HW2.
+        Hint: Question 1.2
         """
 
         assert max_lr >= min_lr >= 0.0
         assert num_training_steps >= num_warmup_steps >= 0
 
         if t <= num_warmup_steps:
-            lr = ...
+            lr = max_lr * t / num_warmup_steps
         elif t >= num_training_steps:
-            lr = ...
-        else:
-            lr = ...
+            lr = min_lr
+        else:  # t >= num_training_steps
+            #print(str((t-num_warmup_steps)/(num_training_steps-num_warmup_steps)))
+            lr = 0.5 * (max_lr - min_lr) * (1 + np.cos(np.pi * (t - num_warmup_steps)/(num_training_steps-num_warmup_steps))) + min_lr
         return lr
 
     return get_lr
@@ -126,10 +138,22 @@ def compute_language_modeling_loss(
 
     Hint: Think about what are the groundtruth labels for next token prediction.
     """
-
-    labels = ...
-    logits = ...
-    return ...
+    #print(input_ids)
+    labels = torch.flatten(input_ids[:, 1:], start_dim=0, end_dim=1) #torch.squeeze(input_ids[:, 1:], dim=0)
+    #print(labels)
+    #print(logits)
+    logits = torch.flatten(logits[:, :labels.size(-1), :], start_dim=0, end_dim=1) #torch.squeeze(logits[:, :labels.size(-1), :], dim=0) #.requires_grad_(True)
+    #print(logits)
+    #needed_pad = logits.size(-2) - labels.size(-1)
+    #print(needed_pad)
+    #labels = F.pad(input=labels, pad=(0, needed_pad), mode='constant', value=0)
+    #print(labels)
+    #logits = F.pad(input=logits, pad=(0, 0, 0, needed_pad), mode='constant', value=0)
+    #print(logits)
+    ces = torch.nn.CrossEntropyLoss()
+    #loss = torch.FloatTensor([0.])
+    loss = ces(logits[:labels.size(-1), :], labels) #for batch in range(labels.size(0))] #torch.mean(torch.tensor([F.cross_entropy(logits[batch], labels[batch]) for batch in range(input_ids.size(0))])) #, ignore_index=-1) #F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-1)
+    return loss
 
 
 def train(
@@ -154,25 +178,38 @@ def train(
         grad_accumulation_steps: number of "micro" training steps before each
           gradient update
     """
+    #for parameter in model.parameters():
+    #    print(parameter.device)
+    # optimizer.add_param_group(model.parameters())
+
     # stores training losses for the 20 latest steps
     losses = deque(maxlen=20 * grad_accumulation_steps)
 
     for step in (pbar := trange(num_training_steps)):
         t0 = time.time()
-        lr = ...
+        lr = lr_schedule(step)
+        #print(lr)
         set_lr(optimizer, lr)
 
         for _ in range(grad_accumulation_steps):
             # TODO: sample a batch, generate logits and compute loss
-            input_ids = ...
+            input_ids = next(batch_sampler)
+            if len(list(input_ids.shape)) == 1:
+            	input_ids = torch.reshape(input_ids, (-1, input_ids.size(-1)))
             with autocast:
-                logits = ...
-            loss = ...
+                logits = model(input_ids)
+            loss = compute_language_modeling_loss(input_ids, logits)
+            #lossdgasteps = torch.tensor((loss / grad_accumulation_steps), requires_grad=True)
+            #loss.requires_grad_(requires_grad=True)
+            #print(loss)
             (loss / grad_accumulation_steps).backward()
             loss_f = loss.item()
             losses.append(loss_f)
+            #print(next(iter(model.parameters())).grad)
 
         # TODO: update the model using the accumulated gradients
+        optimizer.step()
+        optimizer.zero_grad()
         loss_mean = np.mean(losses).item()
 
         FLOPs_per_step = (
@@ -233,7 +270,10 @@ def main():
     # initialize tokenizer and model
     tokenizer = tiktoken.get_encoding(config.tokenizer_encoding)
     device = determine_device() if config.device == "auto" else config.device
+    #print(determine_device())
+    #device = torch.device("cuda")
     model = DecoderLM(tokenizer.n_vocab, **config.model_config).to(device)
+    # if torch.cuda.is_available(): model.to(torch.device("cuda"))
     print(f"model parameters = {count_params(model) / 1e6:.0f}M")
 
     model_disk_size_MB = estimate_model_disk_size(model) * 1e-6
