@@ -26,11 +26,12 @@ def softmax_with_temperature(
     """
 
     # to avoid division by 0
+    print(logits.shape)
     temperature = max(temperature, 5e-2) #1e-5)
     num = torch.exp(logits / temperature)
-    print(num)
+    #print(num)
     den = torch.transpose(torch.sum(num, axis=-1).repeat(logits.size(-1), 1), 0, 1)
-    print(den)
+    #print(den)
 
     return torch.div(num, den)
 
@@ -65,19 +66,20 @@ def generate(
         padding tokens, and 1.0 everywhere else.
     """
     tokens_list = tokenizer.encode_batch(prefixes, allowed_special={"<|endoftext|>"})
-    print(tokens_list)
-
+    #print(tokens_list)
+    #print(max(tokens_list))
     seq_len = 128
     #seq_n = 0
     equal_len_tokens = []
     attention_mask = []
     for sequence in tokens_list:
         #print(sequence)
-        while len(sequence) > seq_len:
+        while len(sequence) >= seq_len:
            equal_len_tokens.append(sequence[:seq_len])
            sequence = sequence[seq_len:]
            #print(equal_len_tokens) #seq_n += 1
         #print(len(sequence))
+        # Make [tokenizer.eot_token]
         left_padded_tokens = [tokenizer.eot_token] * (seq_len - len(sequence)) + sequence
         #print(left_padded_tokens)
         equal_len_tokens.append(left_padded_tokens)
@@ -88,25 +90,53 @@ def generate(
     batched_tokens = []
     batched_masks = []
     if batch_size is None or len(equal_len_tokens) < batch_size:
-        tokens = torch.tensor(equal_len_tokens, dtype=torch.long, device=device)
+        tokens = torch.tensor(equal_len_tokens, dtype=torch.long)
         batched_tokens.append(tokens)
-        mask = torch.tensor(attention_mask, dtype=torch.float, device=device)
+        mask = torch.tensor(attention_mask, dtype=torch.float)
         batched_masks.append(mask)
     else:
-        while equal_len_tokens / batch_size > 0:
-            tokens = torch.tensor(equal_len_tokens[:batch_size], dtype=torch.long, device=device)
+        while len(equal_len_tokens) / batch_size > 0:
+            tokens = torch.tensor(equal_len_tokens[:batch_size], dtype=torch.long)
             batched_tokens.append(tokens)
             equal_len_tokens = equal_len_tokens[batch_size:]
-            mask = torch.tensor(attention_mask[:batch_size], dtype=torch.float, device=device)
+            mask = torch.tensor(attention_mask[:batch_size], dtype=torch.float)
             batched_masks.append(mask)
             attention_mask = attention_mask[batch_size:]
+    #print(len(batched_tokens))
+    #print(len(batched_tokens[0]))
+    #if len(batched_tokens[-1]) < batch_size:
+        # Make 0 tokenizer.eot_token
+    #    batched_tokens[-1] = torch.cat((batched_tokens[-1], torch.full((batch_size - len(batched_tokens[-1]), seq_len), tokenizer.eot_token)))
+    #    batched_masks[-1] = torch.cat((batched_masks[-1], torch.full((batch_size - len(batched_masks[-1]), seq_len), 0.0)))
+    batch_of_tokens = next(iter(batched_tokens)).to(device)
+    #print(batch_of_tokens.shape)
+    batch_of_masks = next(iter(batched_masks)).to(device)
+    #print(batch_of_masks.shape)
+    new_logits = model(batch_of_tokens) #, attention_mask=batch_of_masks)
+    generations = []
+    for sequence in new_logits:
+        print("Sequence shape in generate")
+        print(sequence.shape)
+        probabilities = softmax_with_temperature(sequence[-1*max_new_tokens - 1: -1, :], temperature)
+        #print(probabilities.shape)
+        new_token_encodings = torch.multinomial(probabilities, num_samples=1)
+        #print(new_tokens.shape)
+        generated_tokens = []
+        generation = ""
+        for new_token_encoding in new_token_encodings:
+            new_token = tokenizer.decode(new_token_encoding.tolist())
+            generated_tokens.append(new_token)
+            generation += new_token
+        print(generation)
+        generations.append(generation)
+        #loss_per_sequence = compute_language_modeling_loss(,) #torch.nn.functional.cross_entropy(new_token_encodings, sequence[-1*max_new_tokens:-1, :], reduction="none")
+        #print("Loss for " + generation + ": " + str(loss_per_sequence))
 
-    logits = model(next(iter(batched_tokens)), attention_mask=next(iter(batched_masks)))
-    probabilities = softmax_with_temperature(logits, temperature)
-    generations = tokenizer.decode(probabilities)
-    perplexity = 0
+    loss = compute_language_modeling_loss(batch_of_tokens, new_logits)
 
+    perplexity = math.exp(loss)
     print(f"Perplexity: {perplexity}")
+
     return generations
 
 
