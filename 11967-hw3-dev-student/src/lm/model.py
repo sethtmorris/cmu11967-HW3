@@ -85,7 +85,10 @@ class MultiHeadAttention(nn.Module):
         """
 
         # compute the attention weights using q and kT
-        # print(q.shape)
+        #print(q)
+        #print(q.device)
+        #print(kT)
+        #print(kT.device)
         qkT =  torch.matmul(q, kT) # ...
         unmasked_attn_logits = qkT * self.scale_factor
 
@@ -371,12 +374,13 @@ class DecoderLM(nn.Module):
         if attention_mask is not None:
             #print(attention_mask)
             attention_mask = attention_mask.to(input_ids.device)
-            position_ids = torch.sub(torch.cumsum(attention_mask, dim=1), 1)
+            position_ids = torch.clamp(torch.sub(torch.cumsum(attention_mask, dim=1), 1), min=0)
             #print(position_ids)
         else:
             position_ids = torch.arange(input_ids.size(1), device=input_ids.device).repeat(input_ids.size(0), 1)
             #print(position_ids)
-        #print(self.position_embeddings.weight)
+        #print(self.position_embeddings.weight.shape)
+        #print(position_ids)
         positional_embeddings = self.position_embeddings(position_ids.int()) #F.embedding(position_ids.int().to(input_ids.device), self.position_embeddings.weight.to(input_ids.device)) # ...
         positional_embeddings = positional_embeddings.to(token_embeddings.device)
         #print(positional_embeddings)
